@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
 const html404 = `<!DOCTYPE html>
@@ -20,6 +21,26 @@ const html404 = `<!DOCTYPE html>
     <p>Данный ресурс не найден или не существовал вовсе</p>
 </body>
 </html>`
+
+type responseWriterInterceptor struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *responseWriterInterceptor) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		interceptor := &responseWriterInterceptor{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(interceptor, r)
+		duration := time.Since(start)
+		log.Printf("[%s] %d | %13v | %s", r.Method, interceptor.statusCode, duration, r.URL.Path)
+	})
+}
 
 func customFSWrap(publicDir string, errorHandler http.HandlerFunc) http.Handler {
 	fs := http.FileServer(http.Dir(publicDir))
@@ -52,7 +73,9 @@ func handle404(w http.ResponseWriter, r *http.Request) {
 func main() {
 	wrappedFS := customFSWrap("./public", handle404)
 
-	http.Handle("/", wrappedFS)
+	handlerWithLogging := loggingMiddleware(wrappedFS)
+
+	http.Handle("/", handlerWithLogging)
 
 	log.Println("Сервер запущен на http://localhost:3000")
 
